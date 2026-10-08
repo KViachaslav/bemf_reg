@@ -1,0 +1,8 @@
+﻿200003b4 b motor_duty
+200003b6 b motor_running
+2000000e d pid_enabled
+20000400 b pid_integral
+20000008 d pid_ki
+20000004 d pid_kp
+2000000c d pid_output
+20000404 b pid_setpoint

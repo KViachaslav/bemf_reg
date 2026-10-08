@@ -1,0 +1,14 @@
+﻿200002bc b adc_dma_buf
+200002fe b adc_low_raw
+200002c0 b adc_seq_done
+2000030c b bemf_rpm
+20000308 b bemf_volts
+20000440 b cal_volts
+20000312 b data_valid
+2000031c b fault_code
+20000310 b invalid_streak
+20000000 d k_motor
+20000311 b sensor_streak
+20000408 B uwTick
+20000300 b v_low
+20000304 b v_supply

@@ -1,0 +1,10 @@
+﻿ .text.uart_cmd_send_string
+                0x080060a8                uart_cmd_send_string
+ .data.uwTickPrio
+                0x20000010                uwTickPrio
+ .data.uwTickFreq
+                0x20000014                uwTickFreq
+ .bss.adc_seq_done
+ .bss.uwTick    0x2000040c        0x4 C:/project/BEMF_reg/_build/out/stm32f1xx_hal.o
+                0x2000040c                uwTick
+ .bss.telemetry_tick

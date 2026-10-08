@@ -1,0 +1,20 @@
+﻿Порт: COM11   115200 8N1   захват 4 c
+powershell.exe : C:\project\BEMF_reg\_uart_test\read_u
+art.ps1 : Исключе
+строка:1 знак:1
++ & powershell -NoProfile -ExecutionPolicy Bypass -Fil
+e 'c:\project\BEM ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\proje 
+   ct\BEMF...t.ps1 : Исключе:String) [], RemoteExcep  
+  tion
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ние при вызове "Open" с "0" аргументами: "Доступ к пор
+ту 'COM11' закрыт."
+    + CategoryInfo          : NotSpecified: (:) [read 
+   _uart.ps1], MethodInvocationException
+    + FullyQualifiedErrorId : UnauthorizedAccessExcep 
+   tion,read_uart.ps1
+ 

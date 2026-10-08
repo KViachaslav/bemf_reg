@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BEMF_reg — пульт мотора (UART 115200)</title>
+<!--
+  Пульт управления боевой прошивкой BEMF_reg через UART (USART1, 115200 8N1).
+  Работает в браузере через Web Serial API (Chrome/Edge 89+, нужен защищённый
+  контекст: http://localhost или https). Запускать удобнее всего так:
+
+      powershell -ExecutionPolicy Bypass -File _uart_test\serve_motor_control.ps1
+
+  Протокол прошивки (см. Core/Src/uart_cmd.c):
+      S<rpm>      уставка оборотов            -> OK SET=<rpm>
+      K<kp>,<ki>  коэффициенты ПИ             -> OK K=<kp>,<ki>
+      R           пуск (мотор+ШИМ по уставке) -> OK RUN
+      X           стоп + сброс аварии         -> OK STOP
+      ?           немедленный кадр телеметрии -> RPM=.. SET=.. DUTY=.. ERR=.. ADC=.. VS=.. FLT=..
+      C           калибровка, шаг 1 (50 % ШИМ, 1 с) -> OK CAL VBEMF=<В> V, SEND C<rpm>
+      C<rpm>      калибровка, шаг 2 (по тахометру)  -> OK K=<...>
+      иначе                                   -> ERR UNKNOWN CMD
+
+  ВАЖНО: телеметрия идёт непрерывно ~10 Гц (100 мс). Модуль fault глушит мотор,
+  если от ПК больше 5 с нет НИ ОДНОЙ команды (FAULT_UART_LOST, FLT=3), поэтому
+  пульт шлёт keep-alive '?' каждые 2 с, пока порт открыт.
+-->
+<style>
+  :root{
+    --bg:#0f1216; --panel:#161b22; --panel2:#1d242e; --line:#2b3644;
+    --txt:#e6edf3; --dim:#8b98a5; --acc:#2f81f7;
+    --ok:#3fb950; --warn:#d29922; --err:#f85149; --bemf:#39c5cf;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--txt);
+    font:14px/1.45 "Segoe UI",Roboto,Arial,sans-serif;
+  }
+  header{
+    display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;justify-content:space-between;
+    padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);
+    position:sticky;top:0;z-index:9;
+  }
+  h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.2px}
+  h1 span{color:var(--dim);font-weight:400}
+  h2{font-size:12px;margin:0 0 10px;color:var(--dim);text-transform:uppercase;letter-spacing:.7px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .grow{flex:1 1 auto}
+  .sep{width:1px;height:26px;background:var(--line)}
+  button{
+    font:inherit;padding:7px 12px;border-radius:8px;cursor:pointer;
+    border:1px solid var(--line);background:var(--panel2);color:var(--txt);
+    transition:border-color .12s,background .12s;
+  }
+  button:hover:not(:disabled){border-color:var(--acc)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  button.go{background:#1f6f34;border-color:#1f6f34;color:#fff;font-weight:600}
+  button.danger{background:#b62324;border-color:#b62324;color:#fff;font-weight:600}
+  button.big{padding:13px 16px;font-size:15px}
+  button.chip{padding:5px 10px;font-size:13px;border-radius:999px}
+  input[type=number],input[type=text]{
+    font:inherit;padding:7px 9px;border-radius:8px;background:#0b0e12;
+    border:1px solid var(--line);color:var(--txt);
+  }
+  input[type=number]{width:96px}
+  input[type=text]{width:100%}
+  input:focus,button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+  label{color:var(--dim);display:inline-flex;gap:6px;align-items:center}
+  label b{color:var(--txt);font-weight:600}
+  .pill{
+    display:inline-flex;gap:7px;align-items:center;padding:5px 11px;border-radius:999px;
+    font-size:13px;font-weight:600;border:1px solid var(--line);background:var(--panel2);
+  }
+  .pill .dot{width:9px;height:9px;border-radius:50%;background:var(--dim)}
+  .pill.on .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .pill.bad .dot{background:var(--err);box-shadow:0 0 8px var(--err)}
+  .banner{
+    margin:10px 16px 0;padding:10px 14px;border-radius:10px;
+    border:1px solid var(--warn);background:#2b2412;color:#f0d27a;
+  }
+  .banner.err{border-color:var(--err);background:#2d1416;color:#ffb4ae}
+  .banner.ok{border-color:var(--ok);background:#12240f;color:#a8e6a3}
+  .banner.hidden{display:none}
+  main{
+    display:grid;gap:14px;padding:14px 16px 28px;
+    grid-template-columns:minmax(320px,420px) minmax(320px,1fr);
+    align-items:start;
+  }
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .card + .card{margin-top:14px}
+  .stack{display:grid;gap:14px;align-content:start}
+  .field{display:grid;gap:7px;margin-bottom:12px}
+  .field:last-child{margin-bottom:0}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:10px}
+  .tile{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+  .tile .k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px}
+  .tile .v{font-size:21px;font-weight:600;font-variant-numeric:tabular-nums}
+  .tile .v .u{font-size:12px;color:var(--dim);font-weight:400;margin-left:2px}
+  .tile.alarm .v{color:var(--ok)}
+  .tile.alarm.bad{border-color:var(--err);background:#2d1416}
+  .tile.alarm.bad .v{color:var(--err)}
+  .tile.alarm.bad .v .u{color:#ffb4ae}
+  #chart{width:100%;height:200px;display:block;background:#0b0e12;border:1px solid var(--line);border-radius:10px}
+  .legend{display:flex;gap:16px;font-size:12px;color:var(--dim);margin:8px 0 0;flex-wrap:wrap}
+  .legend i{display:inline-block;width:16px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  #log{
+    height:220px;overflow:auto;background:#0b0e12;border:1px solid var(--line);border-radius:10px;
+    padding:8px 10px;font:12px/1.5 Consolas,"Courier New",monospace;white-space:pre-wrap;
+    word-break:break-word;
+  }
+  #log .t{color:#5e6b7a}
+  #log .tx{color:var(--acc)}
+  #log .rx{color:var(--dim)}
+  #log .ok{color:var(--ok)}
+  #log .er{color:var(--err)}
+  #log .ev{color:var(--warn)}
+  details{margin-top:10px}
+  summary{cursor:pointer;color:var(--dim)}
+  table{border-collapse:collapse;width:100%;margin-top:8px;font-size:13px}
+  th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--dim);font-weight:600}
+  code{background:#0b0e12;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:12px}
+  .hint{color:var(--dim);font-size:12px}
+  .kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 5px;background:var(--panel2);font-size:12px}
+  .hidden{display:none !important}
+</style>
+</head>
+<body>
+<header>
+  <h1>BEMF_reg — пульт мотора <span>· UART 115200 8N1</span></h1>
+  <div class="row">
+    <span id="statusPill" class="pill"><i class="dot"></i><span id="statusText">нет связи</span></span>
+    <button id="btnConnect" class="primary">Подключить порт</button>
+    <button id="btnDisconnect" disabled>Отключить</button>
+    <div class="sep"></div>
+    <button id="btnSaveLog">Сохранить лог</button>
+    <button id="btnClearLog">Очистить</button>
+  </div>
+</header>
+
+<div id="bannerApi" class="banner hidden">
+  <b>Web Serial недоступен в этом браузере.</b> Нужен Chrome/Edge 89+ и
+  <b>защищённый контекст</b>. Откройте пульт через локальный сервер:
+  <code>powershell -ExecutionPolicy Bypass -File _uart_test\serve_motor_control.ps1</code>
+  — он поднимет <code>http://localhost:8099/</code> и откроет браузер.
+</div>
+<div id="bannerPort" class="banner err hidden"></div>
+
+<main>
+  <div class="stack">
+    <section class="card">
+      <h2>Мотор</h2>
+      <div class="field">
+        <div class="row">
+          <label>Уставка, об/мин</label>
+          <input type="number" id="setRpm" min="0" max="6000" step="10" value="300">
+          <button id="btnSet" class="primary">S — задать</button>
+        </div>
+        <div class="row" id="chips">
+          <button class="chip" data-rpm="0">0</button>
+          <button class="chip" data-rpm="150">150</button>
+          <button class="chip" data-rpm="300">300</button>
+          <button class="chip" data-rpm="500">500</button>
+          <button class="chip" data-rpm="1000">1000</button>
+          <button class="chip" data-rpm="1500">1500</button>
+          <button class="chip" data-rpm="2000">2000</button>
+          <button class="chip" data-rpm="3000">3000</button>
+        </div>
+        <div class="hint">Пресеты сразу отправляют уставку (без пуска). Максимум по прошивке — 6000.</div>
+      </div>
+      <div class="field">
+        <div class="row">
+          <button id="btnRun" class="go big">▶ Пуск (R)</button>
+          <button id="btnStop" class="danger big">■ Стоп (X)</button>
+          <button id="btnStatus" class="big">⟳ Статус (?)</button>
+        </div>
+        <div class="hint">
+          Порядок безопасного пуска: <b>X</b> → <b>S</b> (уставка) → <b>R</b>.
+          Аварийный стоп в любой момент — <span class="kbd">Esc</span>.
+        </div>
+      </div>
+      <div class="field">
+        <div class="row">
+          <label title="Что шлёт пульт, чтобы сбросить сторожевой таймер связи (FAULT_UART_TIMEOUT_MS = 5000 мс)">
+            <input type="checkbox" id="keepAlive" checked> keep-alive «?» каждые
+          </label>
+          <input type="number" id="keepAliveMs" min="500" max="4000" step="100" value="2000">
+          <label>мс</label>
+          <label><input type="checkbox" id="stopOnExit" checked> слать <b>X</b> при отключении</label>
+        </div>
+        <div class="hint" id="linkAge">Нет данных от платы.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Коэффициенты ПИ</h2>
+      <div class="field">
+        <div class="row">
+          <label>Kp</label><input type="number" id="kp" step="0.1" value="1.5">
+          <label>Ki</label><input type="number" id="ki" step="0.1" value="0.6">
+          <button id="btnGains">K — применить</button>
+        </div>
+        <div class="hint">По умолчанию в прошивке 1.5 / 0.6 (подобрано на стенде). Команда <code>K1.5,0.6</code>.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Калибровка K_motor</h2>
+      <div class="field">
+        <div class="row">
+          <button id="btnCal">C — шаг 1 (50 % ШИМ, 1 с)</button>
+        </div>
+        <div class="row">
+          <label>Обороты по тахометру</label>
+          <input type="number" id="calRpm" min="1" step="10" placeholder="1715">
+          <button id="btnCal2">C&lt;rpm&gt; — шаг 2</button>
+        </div>
+        <div class="hint" id="calInfo">Шаг 1 раскручивает мотор в открытом цикле на 50 % ШИМ — <b>держите вал свободным</b> и убедитесь, что лимит тока БП ≥ 3 А (иначе честный <code>FLT=4</code>).</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Любая команда</h2>
+      <div class="field">
+        <div class="row">
+          <input type="text" id="rawCmd" placeholder="например: S1200  |  K2,0.5  |  ?  |  C1715">
+          <button id="btnSendRaw">Отправить</button>
+        </div>
+        <div class="hint">К любой команде автоматически добавляется <code>\r\n</code>.</div>
+      </div>
+    </section>
+  </div>
+
+  <div class="stack">
+    <section class="card">
+      <h2>Телеметрия</h2>
+      <div class="tiles">
+        <div class="tile"><div class="k">RPM</div><div class="v" id="tRpm">—</div></div>
+        <div class="tile"><div class="k">Уставка SET</div><div class="v" id="tSet">—</div></div>
+        <div class="tile"><div class="k">ШИМ DUTY</div><div class="v" id="tDuty">—</div></div>
+        <div class="tile"><div class="k">Ошибка ERR</div><div class="v" id="tErr">—</div></div>
+        <div class="tile"><div class="k">АЦП ADC</div><div class="v" id="tAdc">—</div></div>
+        <div class="tile"><div class="k">Питание VS</div><div class="v" id="tVs">—</div></div>
+        <div class="tile alarm" id="tileFlt">
+          <div class="k">Авария FLT</div>
+          <div class="v" id="tFlt">—</div>
+        </div>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--bemf)"></i>RPM (измерено)</span>
+        <span><i style="background:var(--warn)"></i>SET (уставка)</span>
+        <span id="chartInfo" class="hint"></span>
+      </div>
+      <canvas id="chart" width="900" height="200"></canvas>
+      <div class="hint" style="margin-top:6px">
+        Окно 60 с, обновление 10 Гц. <b>ADC</b> — код АЦП низкой стороны (≈0 при выключенном ШИМ),
+        <b>VS</b> — питание мотора, В.
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Журнал</h2>
+      <div class="row" style="margin-bottom:8px">
+        <label><input type="checkbox" id="logFrames"> показывать кадры телеметрии (каждый 10-й)</label>
+        <label><input type="checkbox" id="autoScroll" checked> авто-прокрутка</label>
+        <span class="hint" id="logCount"></span>
+      </div>
+      <div id="log"></div>
+      <div class="hint" style="margin-top:6px">
+        «Сохранить лог» пишет <b>все</b> кадры (как <code>motor_*.txt</code> в этом каталоге): время, TX, RX.
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Подсказка</h2>
+      <details open>
+        <summary>Пуск мотора за 3 шага</summary>
+        <ol style="margin:8px 0 0 18px;padding:0">
+          <li>«Подключить порт» → выбрать USB-UART (обычно <code>USB-SERIAL CH340</code>).</li>
+          <li>Уставка (например 300) → «S — задать».</li>
+          <li>«▶ Пуск (R)». Дальше ступени пресетами, в конце — «■ Стоп (X)».</li>
+        </ol>
+      </details>
+      <details>
+        <summary>Коды аварий FLT</summary>
+        <table>
+          <tr><th>FLT</th><th>Что значит</th><th>Что делать</th></tr>
+          <tr><td>0</td><td>Аварии нет</td><td>—</td></tr>
+          <tr><td>1</td><td>Заклинивание (уставка ≥ 500, обороты &lt; 100 дольше 500 мс)</td><td>освободить вал, <code>X</code></td></tr>
+          <tr><td>2</td><td>Недостоверный BEMF (код АЦП у края шкалы / V_bemf вне 0…V_supply)</td><td>проверить делители PA0/PA1, <code>X</code></td></tr>
+          <tr><td>3</td><td>Потеря связи с ПК (&gt; 5 с без команд)</td><td>включить keep-alive, <code>X</code></td></tr>
+          <tr><td>4</td><td>Просадка питания ниже 6 В</td><td>поднять лимит тока БП, <code>X</code></td></tr>
+          <tr><td>5</td><td>Обрыв измерительного тракта</td><td>проверить пайку делителя, <code>X</code></td></tr>
+        </table>
+      </details>
+      <details>
+        <summary>Команды протокола</summary>
+        <table>
+          <tr><th>Команда</th><th>Действие</th><th>Ответ</th></tr>
+          <tr><td><code>S&lt;rpm&gt;</code></td><td>уставка оборотов</td><td><code>OK SET=1500</code></td></tr>
+          <tr><td><code>K&lt;kp&gt;,&lt;ki&gt;</code></td><td>коэффициенты ПИ</td><td><code>OK K=1.5,0.6</code></td></tr>
+          <tr><td><code>R</code></td><td>пуск (при активной аварии откажет)</td><td><code>OK RUN</code></td></tr>
+          <tr><td><code>X</code></td><td>стоп + сброс аварии</td><td><code>OK STOP</code></td></tr>
+          <tr><td><code>?</code></td><td>немедленный кадр телеметрии</td><td>кадр <code>RPM=…</code></td></tr>
+          <tr><td><code>C</code></td><td>калибровка шаг 1 (50 % ШИМ, 1 с)</td><td><code>OK CAL VBEMF=5.20 V, SEND C&lt;rpm&gt;</code></td></tr>
+          <tr><td><code>C&lt;rpm&gt;</code></td><td>калибровка шаг 2 по тахометру</td><td><code>OK K=329.7</code></td></tr>
+        </table>
+      </details>
+      <div class="hint" style="margin-top:10px">
+        ⚠ Если закрыть вкладку/выдернуть адаптер при работающем моторе, пульт перестанет слать keep-alive
+        и прошивка сама остановит мотор через 5 с (<code>FLT=3</code>) — это штатная защита.
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<script>
+'use strict';
+
+/* ---------------------------------------------------------------------------
+   Константы, привязанные к прошивке (Core/Inc/uart_cmd.h, Core/Inc/fault.h)
+   --------------------------------------------------------------------------- */
+const BAUD = 115200;                       // USART1 боевой прошивки
+const KEEPALIVE_DEFAULT_MS = 2000;         // FAULT_UART_TIMEOUT_MS = 5000 -> запас x2.5
+const CHART_WINDOW_MS = 60000;             // окно графика, мс
+const HISTORY_MAX = 4000;                  // 10 Гц -> ~400 с истории
+const RAW_LOG_MAX = 60000;                 // строк в файле журнала (~100 мин при 10 Гц)
+const UI_LOG_MAX = 400;                    // строк в окне журнала
+
+/* Кадр телеметрии из uart_cmd_send_telemetry():
+   "RPM=%lu SET=%lu DUTY=%lu.%lu%% ERR=%ld ADC=%u VS=%lu.%luV FLT=%u\r\n"     */
+const FRAME_RE = /RPM=(-?\d+)\s+SET=(-?\d+)\s+DUTY=(\d+)\.(\d)%\s+ERR=(-?\d+)\s+ADC=(\d+)\s+VS=(\d+)\.(\d)V\s+FLT=(\d+)/;
+const FLT_NAME = {
+  0: 'норма', 1: 'заклинивание', 2: 'недостоверный BEMF',
+  3: 'потеря связи', 4: 'просадка питания', 5: 'обрыв датчика'
+};
+
+/* ---------------------------------------------------------------------------
+   Состояние
+   --------------------------------------------------------------------------- */
+let port = null;            // SerialPort
+let reader = null;          // ReadableStreamDefaultReader
+let writer = null;          // WritableStreamDefaultWriter
+let rxBuffer = '';          // неполная строка из порта
+let txQueue = Promise.resolve();
+let lastRxAt = 0;           // performance.now() последнего принятого байта
+let lastFrame = null;
+let calVolts = 0;           // V_bemf из "OK CAL VBEMF=..."
+let uiFrameCounter = 0;
+let keepAliveTimer = null;
+let ageTimer = null;
+let userBusyUntil = 0;      // пауза для авто-keep-alive после команд пользователя
+let keepAliveCount = 0;
+let portLabel = '—';
+const history = [];         // кадры телеметрии для графика
+const rawLog = [];          // все строки для сохранения в файл
+
+const $ = (id) => document.getElementById(id);
+const enc = new TextEncoder();
+
+/* ---------------------------------------------------------------------------
+   Вспомогательные функции
+   --------------------------------------------------------------------------- */
+function clock() {
+  const d = new Date();
+  const p = (n, w) => String(n).padStart(w, '0');
+  return p(d.getHours(), 2) + ':' + p(d.getMinutes(), 2) + ':' + p(d.getSeconds(), 2) +
+         '.' + p(d.getMilliseconds(), 3);
+}
+
+function fileStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' +
+         p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+}
+
+function frameText(f) {
+  return 'RPM=' + f.rpm + ' SET=' + f.set + ' DUTY=' + f.duty.toFixed(1) + '%' +
+         ' ERR=' + f.err + ' ADC=' + f.adc + ' VS=' + f.vs.toFixed(1) + 'V FLT=' + f.flt;
+}
+
+function addUi(cls, prefix, text) {
+  const el = $('log');
+  const div = document.createElement('div');
+  div.innerHTML = '<span class="t">[' + clock() + ']</span> <span class="' + cls + '">' +
+                  prefix + ' ' + text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) +
+                  '</span>';
+  el.appendChild(div);
+  while (el.childElementCount > UI_LOG_MAX) { el.removeChild(el.firstChild); }
+  if ($('autoScroll').checked) { el.scrollTop = el.scrollHeight; }
+}
+
+function log(prefix, text, cls) {
+  addUi(cls, prefix, text);
+  rawLog.push('[' + clock() + '] ' + prefix + ' ' + text);
+  while (rawLog.length > RAW_LOG_MAX) { rawLog.shift(); }
+  $('logCount').textContent = 'строк в файле: ' + rawLog.length;
+}
+
+function ev(text)  { log('==', text, 'ev'); }
+function tx(text)  { log('>>', text, 'tx'); }
+function ok(text)  { log('<-', text, 'ok'); }
+function err(text) { log('!!', text, 'er'); }
+
+function banner(id, text, cls) {
+  const el = $(id);
+  if (!text) { el.classList.add('hidden'); return; }
+  el.className = 'banner' + (cls ? ' ' + cls : '');
+  el.innerHTML = text;
+}
+
+function setStatus(state, text) {
+  const pill = $('statusPill');
+  pill.className = 'pill' + (state === 'on' ? ' on' : (state === 'bad' ? ' bad' : ''));
+  $('statusText').textContent = text;
+}
+
+/* ---------------------------------------------------------------------------
+   Web Serial: подключение / чтение / запись
+   --------------------------------------------------------------------------- */
+async function connect() {
+  if (port) { ev('порт уже открыт'); return; }
+
+  let picked;
+  try {
+    picked = await navigator.serial.requestPort();
+  } catch (e) {
+    if (e && e.name === 'NotFoundError') { ev('выбор порта отменён'); }
+    else { err('requestPort: ' + (e && e.message ? e.message : e)); }
+    return;
+  }
+
+  try {
+    await picked.open({ baudRate: BAUD, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none' });
+  } catch (e) {
+    err('не удалось открыть порт: ' + (e && e.message ? e.message : e));
+    banner('bannerPort', 'Порт занят или недоступен: ' + (e && e.message ? e.message : e) +
+           '.<br>Закройте программы, удерживающие COM-порт (<code>read_uart.ps1</code>, PuTTY, монитор порта), ' +
+           'при необходимости отсоедините/подсоедините адаптер и нажмите «Подключить порт» ещё раз.', 'err');
+    return;
+  }
+
+  port = picked;
+  const info = port.getInfo ? port.getInfo() : {};
+  portLabel = (info.usbVendorId !== undefined ? 'VID=0x' + info.usbVendorId.toString(16) : 'VID=?') + ' ' +
+              (info.usbProductId !== undefined ? 'PID=0x' + info.usbProductId.toString(16) : 'PID=?');
+  writer = port.writable.getWriter();
+
+  banner('bannerPort', '');
+  banner('bannerApi', '');
+  setStatus('on', 'связь');
+  $('btnConnect').disabled = true;
+  $('btnDisconnect').disabled = false;
+  ev('порт открыт, ' + BAUD + ' 8N1, ' + portLabel);
+  startAgeTimer();
+  startKeepAlive();
+  readLoop();
+}
+
+async function disconnect() {
+  if (!port) { return; }
+  $('btnDisconnect').disabled = true;
+
+  if ($('stopOnExit').checked && writer) {
+    try {
+      await writer.write(enc.encode('X\r\n'));
+      tx('X (перед отключением)');
+      await new Promise((r) => setTimeout(r, 300));   // дать плате принять команду и остановиться
+    } catch (_) { /* устройство могло уже исчезнуть */ }
+  }
+
+  stopKeepAlive();
+  stopAgeTimer();
+
+  try { if (reader) { await reader.cancel(); } } catch (_) { }
+  try { if (writer) { writer.releaseLock(); } } catch (_) { }
+  const p = port;
+  port = null; reader = null; writer = null; rxBuffer = '';
+  try { await p.close(); ev('порт закрыт'); }
+  catch (e) { ev('порт закрыт с замечанием: ' + (e && e.message ? e.message : e)); }
+
+  setStatus('', 'нет связи');
+  $('btnConnect').disabled = false;
+  $('btnDisconnect').disabled = true;
+}
+
+async function readLoop() {
+  try {
+    reader = port.readable.getReader();
+  } catch (e) { err('getReader: ' + (e && e.message ? e.message : e)); return; }
+
+  const dec = new TextDecoder();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) { ev('поток чтения завершён платой/системой'); break; }
+      if (!value || value.length === 0) { continue; }
+      lastRxAt = performance.now();
+      rxBuffer += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = rxBuffer.indexOf('\n')) >= 0) {
+        const line = rxBuffer.slice(0, idx).replace(/\r$/, '');
+        rxBuffer = rxBuffer.slice(idx + 1);
+        if (line.length > 0) { handleLine(line); }
+      }
+      if (rxBuffer.length > 4096) { rxBuffer = ''; }   // мусор без переводов строки
+    }
+  } catch (e) {
+    err('чтение прервано: ' + (e && e.message ? e.message : e));
+    banner('bannerPort', 'Связь потеряна: ' + (e && e.message ? e.message : e) +
+           '.<br>Отсоедините и подключите адаптер, затем «Подключить порт».', 'err');
+    setStatus('bad', 'обрыв');
+  } finally {
+    try { if (reader) { reader.releaseLock(); } } catch (_) { }
+    reader = null;
+  }
+}
+
+function send(cmd) {
+  if (!port || !writer) { ev('нет связи — сначала «Подключить порт»'); return false; }
+  tx(cmd);
+  // Разбор в прошивке однопоточный (uart_cmd_on_byte отбрасывает байты, пока не
+  // разобрана предыдущая строка), поэтому держим паузу без авто-keep-alive.
+  if (cmd !== '?') { userBusyUntil = performance.now() + 800; }
+  const frame = enc.encode(cmd + '\r\n');
+  txQueue = txQueue.then(async () => {
+    try { await writer.write(frame); }
+    catch (e) { err('передача не удалась: ' + (e && e.message ? e.message : e)); }
+  });
+  return true;
+}
+
+/* Сервисный keep-alive: сбрасывает сторожевой таймер связи, но не засоряет журнал */
+function sendKeepAlive() {
+  if (!port || !writer) { return; }
+  if (performance.now() < userBusyUntil) { return; }
+  const frame = enc.encode('?\r\n');
+  txQueue = txQueue.then(async () => {
+    try { await writer.write(frame); }
+    catch (e) { err('keep-alive не прошёл: ' + (e && e.message ? e.message : e)); }
+  });
+  keepAliveCount++;
+  if ((keepAliveCount % 30) === 1) { rawLog.push('[' + clock() + '] >> ? (keep-alive работает)'); }
+}
+
+/* ---------------------------------------------------------------------------
+   Keep-alive и контроль «возраста» связи (защита от FAULT_UART_LOST)
+   --------------------------------------------------------------------------- */
+function keepAlivePeriod() {
+  const v = Number($('keepAliveMs').value);
+  // FAULT_UART_TIMEOUT_MS = 5000 мс — держим период с запасом (300…4000 мс)
+  return Math.max(300, Math.min(4000, isFinite(v) && v > 0 ? v : KEEPALIVE_DEFAULT_MS));
+}
+
+function startKeepAlive() {
+  stopKeepAlive();
+  keepAliveTimer = setInterval(() => {
+    if (!$('keepAlive').checked) { return; }
+    sendKeepAlive();
+  }, keepAlivePeriod());
+}
+
+function stopKeepAlive() {
+  if (keepAliveTimer !== null) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+}
+
+function startAgeTimer() {
+  stopAgeTimer();
+  ageTimer = setInterval(() => {
+    const parts = [];
+    if (!lastRxAt) {
+      parts.push('данных от платы ещё не было');
+    } else {
+      parts.push('последний кадр ' + ((performance.now() - lastRxAt) / 1000).toFixed(1) + ' с назад');
+    }
+    if (lastFrame) { parts.push('FLT=' + lastFrame.flt + ' (' + (FLT_NAME[lastFrame.flt] || '?') + ')'); }
+    parts.push($('keepAlive').checked
+      ? 'keep-alive «?» каждые ' + keepAlivePeriod() + ' мс'
+      : '⚠ keep-alive ВЫКЛЮЧЕН: молчание ПК >5 с при работающем моторе даст FLT=3');
+    $('linkAge').textContent = parts.join(' · ');
+  }, 250);
+}
+
+function stopAgeTimer() {
+  if (ageTimer !== null) { clearInterval(ageTimer); ageTimer = null; }
+  $('linkAge').textContent = 'Нет связи с платой.';
+}
+
+/* ---------------------------------------------------------------------------
+   Разбор строк прошивки
+   --------------------------------------------------------------------------- */
+let prevFlt = -1;
+
+function handleLine(line) {
+  const m = FRAME_RE.exec(line);
+  if (m) { onFrame(m); return; }
+
+  if (line.indexOf('OK') === 0) { ok(line); } else if (line.indexOf('ERR') === 0) { err(line); }
+  else { log('<-', line, 'rx'); }
+
+  if (line.indexOf('OK SET=') === 0) {
+    $('setRpm').value = String(parseInt(line.slice(7), 10) || 0);
+  } else if (line.indexOf('OK K=') === 0) {
+    const g = line.slice(5).split(',');
+    if (g.length === 2) { $('kp').value = g[0]; $('ki').value = g[1]; }
+  } else if (line.indexOf('OK CAL VBEMF=') === 0) {
+    calVolts = parseFloat(line.slice(13)) || 0;
+    $('calInfo').innerHTML = 'Шаг 1 пройден: <b>V_bemf = ' + calVolts.toFixed(3) +
+      ' В</b> при ' + CAL_DUTY_HINT + '. Введите обороты по тахометру и нажмите «C&lt;rpm&gt;».';
+  } else if (line.indexOf('ERR FAULT ACTIVE') === 0) {
+    ev('авария активна: сначала «■ Стоп (X)», потом «▶ Пуск (R)»');
+  } else if (line.indexOf('ERR NO CAL DATA') === 0) {
+    ev('сначала шаг 1: «C — шаг 1», затем «C<rpm>»');
+  }
+}
+
+function onFrame(m) {
+  const f = {
+    t: performance.now(),
+    rpm: Number(m[1]), set: Number(m[2]),
+    duty: Number(m[3] + '.' + m[4]),
+    err: Number(m[5]), adc: Number(m[6]),
+    vs: Number(m[7] + '.' + m[8]), flt: Number(m[9])
+  };
+  lastFrame = f;
+  history.push(f);
+  if (history.length > HISTORY_MAX) { history.shift(); }
+
+  rawLog.push('[' + clock() + '] <- ' + frameText(f));
+  while (rawLog.length > RAW_LOG_MAX) { rawLog.shift(); }
+
+  uiFrameCounter++;
+  if ($('logFrames').checked && (uiFrameCounter % 10) === 0) { addUi('rx', '<-', frameText(f)); }
+  if ((uiFrameCounter % 50) === 0) { $('logCount').textContent = 'строк в файле: ' + rawLog.length; }
+
+  if (f.flt !== prevFlt) {
+    if (prevFlt >= 0) {
+      ev('FLT: ' + prevFlt + ' (' + (FLT_NAME[prevFlt] || '?') + ') -> ' + f.flt + ' (' + (FLT_NAME[f.flt] || '?') + ')');
+    }
+    prevFlt = f.flt;
+  }
+
+  updateTiles(f);
+  drawChart();
+}
+
+function updateTiles(f) {
+  $('tRpm').textContent = String(f.rpm);
+  $('tSet').textContent = String(f.set);
+  $('tDuty').innerHTML = f.duty.toFixed(1) + ' <span class="u">%</span>';
+  $('tErr').textContent = String(f.err);
+  $('tAdc').textContent = String(f.adc);
+  $('tVs').innerHTML = f.vs.toFixed(1) + ' <span class="u">В</span>';
+  $('tFlt').innerHTML = String(f.flt) + ' <span class="u">' + (FLT_NAME[f.flt] || '?') + '</span>';
+  $('tileFlt').classList.toggle('bad', f.flt !== 0);
+  if (f.flt !== 0) { setStatus('bad', 'FLT=' + f.flt); }
+  else if (port) { setStatus('on', 'связь'); }
+}
+
+/* ---------------------------------------------------------------------------
+   График RPM / SET (окно 60 с)
+   --------------------------------------------------------------------------- */
+function drawChart() {
+  const c = $('chart');
+  const ctx = c.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth || 600;
+  const h = c.clientHeight || 200;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+    c.width = Math.round(w * dpr);
+    c.height = Math.round(h * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const padL = 48, padR = 12, padT = 14, padB = 20;
+  const pw = Math.max(20, w - padL - padR);
+  const ph = Math.max(20, h - padT - padB);
+  const now = performance.now();
+  const t0 = now - CHART_WINDOW_MS;
+
+  let ymax = 600;
+  for (let i = history.length - 1; i >= 0 && history[i].t >= t0; i--) {
+    ymax = Math.max(ymax, history[i].rpm, history[i].set);
+  }
+  ymax = Math.ceil((ymax * 1.08) / 100) * 100;
+
+  const xOf = (t) => padL + ((t - t0) / CHART_WINDOW_MS) * pw;
+  const yOf = (v) => padT + ph - Math.max(0, Math.min(1, v / ymax)) * ph;
+
+  ctx.font = '11px "Segoe UI",Arial,sans-serif';
+  ctx.textBaseline = 'middle';
+
+  /* Горизонтальная сетка + подписи оборотов */
+  for (let i = 0; i <= 4; i++) {
+    const v = (ymax / 4) * i;
+    const y = Math.round(yOf(v)) + 0.5;
+    ctx.strokeStyle = '#1e2731';
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + pw, y); ctx.stroke();
+    ctx.fillStyle = '#5e6b7a';
+    ctx.textAlign = 'right';
+    ctx.fillText(String(Math.round(v)), padL - 7, yOf(v));
+  }
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#3d4854';
+  ctx.fillText('об/мин', 6, padT - 6);
+
+  /* Вертикальная сетка каждые 10 с */
+  ctx.textAlign = 'center';
+  for (let s = 0; s <= 60; s += 10) {
+    const x = Math.round(xOf(t0 + s * 1000)) + 0.5;
+    ctx.strokeStyle = '#161d25';
+    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ph); ctx.stroke();
+    ctx.fillStyle = '#5e6b7a';
+    ctx.fillText(s === 60 ? 'сейчас' : ('-' + (60 - s) + ' с'), xOf(t0 + s * 1000), padT + ph + 11);
+  }
+
+  const pts = [];
+  for (const p of history) { if (p.t >= t0) { pts.push(p); } }
+
+  if (pts.length >= 2) {
+    /* Уставка SET — ступенчатая линия */
+    ctx.strokeStyle = '#d29922';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    let prevSetY = yOf(pts[0].set);
+    ctx.moveTo(xOf(pts[0].t), prevSetY);
+    for (const p of pts) {
+      const y = yOf(p.set);
+      if (Math.abs(y - prevSetY) > 0.5) {
+        ctx.lineTo(xOf(p.t), prevSetY);
+        ctx.lineTo(xOf(p.t), y);
+        prevSetY = y;
+      } else {
+        ctx.lineTo(xOf(p.t), y);
+      }
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    /* Обороты RPM — сплошная линия */
+    ctx.strokeStyle = '#39c5cf';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(xOf(pts[0].t), yOf(pts[0].rpm));
+    for (const p of pts) { ctx.lineTo(xOf(p.t), yOf(p.rpm)); }
+    ctx.stroke();
+
+    /* Точка «сейчас» */
+    const last = pts[pts.length - 1];
+    ctx.fillStyle = '#39c5cf';
+    ctx.beginPath(); ctx.arc(xOf(last.t), yOf(last.rpm), 3, 0, Math.PI * 2); ctx.fill();
+    $('chartInfo').textContent = 'RPM ' + last.rpm + ' · SET ' + last.set +
+      ' · ШИМ ' + last.duty.toFixed(1) + ' % · точек ' + pts.length;
+  } else {
+    $('chartInfo').textContent = port ? 'ждём кадры телеметрии…' : 'нет связи';
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Журнал: сохранение и очистка
+   --------------------------------------------------------------------------- */
+function saveLog() {
+  if (rawLog.length === 0) { ev('журнал пуст — сохранять нечего'); return; }
+  const head = [
+    'BEMF_reg — журнал пульта motor_control.html',
+    'Сохранено: ' + new Date().toLocaleString('ru-RU'),
+    'Порт: ' + portLabel + ' · ' + BAUD + ' 8N1',
+    'Строк: ' + rawLog.length,
+    'Формат: [время] >> команда ПК / <- ответ платы / == событие пульта',
+    '----------------------------------------------------------------------'
+  ].join('\r\n');
+  const blob = new Blob([head + '\r\n' + rawLog.join('\r\n') + '\r\n'], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'motor_ui_' + fileStamp() + '.txt';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  ev('журнал сохранён как ' + a.download + ' (' + rawLog.length + ' строк)');
+}
+
+function clearLog() {
+  $('log').innerHTML = '';
+  rawLog.length = 0;
+  uiFrameCounter = 0;
+  $('logCount').textContent = 'строк в файле: 0';
+  ev('окно журнала очищено');
+}
+
+/* ---------------------------------------------------------------------------
+   Действия кнопок
+   --------------------------------------------------------------------------- */
+function motorRunning() {
+  return !!lastFrame && (lastFrame.duty > 0.05 || lastFrame.rpm > 50);
+}
+
+function sendSetpoint() {
+  const raw = Number($('setRpm').value);
+  const rpm = Math.max(0, Math.min(6000, Math.round(isFinite(raw) ? raw : 0)));
+  $('setRpm').value = String(rpm);
+  send('S' + rpm);
+}
+
+function sendGains() {
+  const kp = Number($('kp').value);
+  const ki = Number($('ki').value);
+  if (!isFinite(kp) || !isFinite(ki)) { ev('Kp и Ki должны быть числами'); return; }
+  send('K' + kp + ',' + ki);
+}
+
+function calibrateStep1() {
+  if (motorRunning()) { ev('мотор вращается — сначала «■ Стоп (X)»'); return; }
+  const text = 'Шаг 1 калибровки: мотор 1 с крутится на 50 % ШИМ в открытом цикле.\n\n' +
+               'Вал должен быть свободен, лимит тока блока питания — не меньше 3 А\n' +
+               '(иначе будет честный FLT=4 из-за просадки питания).\n\nПродолжить?';
+  if (!window.confirm(text)) { ev('шаг 1 калибровки отменён'); return; }
+  send('C');
+}
+
+function calibrateStep2() {
+  const rpm = Math.round(Number($('calRpm').value));
+  if (!isFinite(rpm) || rpm <= 0) { ev('введите обороты, измеренные тахометром'); return; }
+  if (calVolts <= 0) { ev('сначала шаг 1: «C — шаг 1 (50 % ШИМ, 1 с)»'); return; }
+  send('C' + rpm);
+}
+
+function sendRaw() {
+  const text = $('rawCmd').value.replace(/[\r\n]+$/, '').trim();
+  if (text.length === 0) { return; }
+  send(text);
+  $('rawCmd').value = '';
+}
+
+/* ---------------------------------------------------------------------------
+   Подключение обработчиков и запуск
+   --------------------------------------------------------------------------- */
+function wire() {
+  $('btnConnect').addEventListener('click', connect);
+  $('btnDisconnect').addEventListener('click', () => { disconnect(); });
+  $('btnSaveLog').addEventListener('click', saveLog);
+  $('btnClearLog').addEventListener('click', clearLog);
+
+  $('btnRun').addEventListener('click', () => send('R'));
+  $('btnStop').addEventListener('click', () => send('X'));
+  $('btnStatus').addEventListener('click', () => send('?'));
+  $('btnSet').addEventListener('click', sendSetpoint);
+  $('setRpm').addEventListener('keydown', (e) => { if (e.key === 'Enter') { sendSetpoint(); } });
+
+  document.querySelectorAll('#chips button').forEach((b) => {
+    b.addEventListener('click', () => { $('setRpm').value = b.dataset.rpm; sendSetpoint(); });
+  });
+
+  $('btnGains').addEventListener('click', sendGains);
+  $('btnCal').addEventListener('click', calibrateStep1);
+  $('btnCal2').addEventListener('click', calibrateStep2);
+  $('btnSendRaw').addEventListener('click', sendRaw);
+  $('rawCmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') { sendRaw(); } });
+
+  $('keepAlive').addEventListener('change', () => { if (port) { startKeepAlive(); } });
+  $('keepAliveMs').addEventListener('change', () => { if (port) { startKeepAlive(); } });
+  $('logFrames').addEventListener('change', () => {
+    ev($('logFrames').checked ? 'кадры телеметрии показываются в журнале (каждый 10-й)'
+                              : 'кадры телеметрии в журнале скрыты (в файл пишутся всегда)');
+  });
+
+  window.addEventListener('resize', drawChart);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); send('X'); }   // аварийный стоп
+  });
+  window.addEventListener('beforeunload', () => {
+    try {   // лучшая попытка: гарантию даёт сторожевой таймер прошивки (FLT=3 через 5 с)
+      if (writer && $('stopOnExit').checked) { writer.write(enc.encode('X\r\n')); }
+    } catch (_) { }
+  });
+
+  if ('serial' in navigator) {
+    navigator.serial.addEventListener('connect', () => {
+      ev('система обнаружила COM-порт (нажмите «Подключить порт»)');
+    });
+    navigator.serial.addEventListener('disconnect', async (e) => {
+      if (!port || e.target !== port) { return; }
+      ev('USB-адаптер отсоединён');
+      await disconnect();
+      setStatus('bad', 'отсоединён');
+      banner('bannerPort', 'USB-адаптер отсоединён. Прошивка сама остановит мотор через 5 с (<code>FLT=3</code>).<br>' +
+             'Подключите адаптер и нажмите «Подключить порт».', 'err');
+    });
+  }
+}
+
+function init() {
+  wire();
+  setStatus('', 'нет связи');
+  drawChart();
+
+  if (!('serial' in navigator)) {
+    const el = $('bannerApi');
+    el.classList.remove('hidden');
+    el.classList.add('err');
+    $('btnConnect').disabled = true;
+    err('Web Serial API недоступен (нужен Chrome/Edge 89+ и защищённый контекст http://localhost)');
+    return;
+  }
+  ev('пульт готов: ' + BAUD + ' 8N1, keep-alive ' + keepAlivePeriod() + ' мс, окно графика ' +
+     (CHART_WINDOW_MS / 1000) + ' с' + (window.isSecureContext ? '' : ' (⚠ контекст не защищённый!)'));
+  ev('Порядок пуска: X -> S<rpm> -> R; аварийный стоп — Esc');
+}
+
+init();
+</script>
+</body>
+</html>
+

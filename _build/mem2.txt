@@ -1,0 +1,28 @@
+﻿      -------------------------------------------------------------------
+                       STM32CubeProgrammer v2.21.0                  
+      -------------------------------------------------------------------
+
+ST-LINK SN  : 37FF71064E573436CF5C1543
+ST-LINK FW  : V2J46S7
+Board       : --
+Voltage     : 3.28V
+SWD freq    : 4000 KHz
+Connect mode: Normal
+Reset mode  : Software reset
+Device ID   : 0x410
+Revision ID : Rev X
+Device name : STM32F101/F102/F103 Medium-density
+Flash size  : 64 KBytes
+Device type : MCU
+Device CPU  : Cortex-M3
+BL Version  : --
+
+
+Reading 32-bit memory content
+  Size          : 80 Bytes
+  Address:      : 0x40012400
+0x40012400 : 00000000 00000000 00000000 00000000
+0x40012410 : 00000000 00000000 00000000 00000000
+0x40012420 : 00000000 00000FFF 00000000 00000000
+0x40012430 : 00000000 00000000 00000000 00000000
+0x40012440 : 00000000 00000000 00000000 00000000

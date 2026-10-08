@@ -1,0 +1,12 @@
+﻿== compile: 27 файлов ==
+== link BEMF_reg.elf ==
+   text	   data	    bss	    dec	    hex	filename
+  40344	    484	   2484	  43312	   a930	c:\project\BEMF_reg\_build\out\BEMF_reg.elf
+== проверка векторов прерываний ==
+
+08005e44 T DMA1_Channel1_IRQHandler
+08005e10 T TIM2_IRQHandler
+08005e2c T TIM3_IRQHandler
+OK -> c:\project\BEMF_reg\_build\out\BEMF_reg.elf
+
+

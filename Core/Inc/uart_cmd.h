@@ -1,0 +1,46 @@
+/**
+  ******************************************************************************
+  * @file    uart_cmd.h
+  * @brief   Приём/разбор команд от ПК (USART1) и вывод телеметрии.
+  *
+  *          Протокол (строки, разделитель '\n' или '\r\n'):
+  *            S<rpm>     — уставка оборотов, например S1500
+  *            K<kp>,<ki> — коэффициенты ПИ, например K0.5,0.1
+  *            R          — запуск мотора
+  *            X          — стоп мотора + сброс fault
+  *            ?          — немедленная телеметрия
+  *            C          — калибровка: 50 % ШИМ, замер V_bemf
+  *            C<rpm>     — пересчёт K_motor по показаниям внешнего тахометра
+  ******************************************************************************
+  */
+
+/* Define to prevent recursive inclusion -------------------------------------*/
+#ifndef __UART_CMD_H
+#define __UART_CMD_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+
+/* Exported constants --------------------------------------------------------*/
+#define UART_CMD_LINE_MAX       32U     /* Максимальная длина команды, байт      */
+#define UART_CMD_TELEMETRY_MS   100U    /* Период телеметрии, мс                 */
+#define UART_CMD_TX_TIMEOUT_MS  50U     /* Таймаут передачи строки, мс           */
+#define UART_CMD_CAL_DUTY       1600U   /* Калибровка: 50 % ШИМ (1600/3200)      */
+#define UART_CMD_CAL_TIME_MS    1000U   /* Калибровка: время прогона, мс         */
+
+/* Exported functions prototypes ---------------------------------------------*/
+void     uart_cmd_init(void);           /* Запуск приёма по прерыванию          */
+void     uart_cmd_poll(void);           /* Вызывается из главного цикла         */
+uint32_t uart_cmd_ms_since_last(void);  /* Время с последней команды, мс        */
+void     uart_cmd_send_telemetry(void);
+void     uart_cmd_send_string(const char *text);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* __UART_CMD_H */

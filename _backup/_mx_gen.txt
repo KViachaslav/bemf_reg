@@ -1,0 +1,3 @@
+config load c:/project/BEMF_reg/BEMF_reg.ioc
+project generate
+exit
