@@ -1,0 +1,48 @@
+﻿SIZE-DIFF  fault_isr_1ms : 416 -> 424
+SIZE-DIFF  HAL_TIM_IC_CaptureCallback : 18 -> 276
+SIZE-DIFF  main : 60 -> 72
+SIZE-DIFF  TIM4_IRQHandler : 2 -> 20
+SIZE-DIFF  uart_cmd_execute : 616 -> 824
+ONLY-IN-A  uart_cmd_ms_since_last = 24
+SIZE-DIFF  uart_cmd_send_telemetry : 324 -> 424
+ONLY-IN-B  h_pwm_in_tim = 72
+ONLY-IN-B  HAL_GPIO_ReadPin = 46
+ONLY-IN-B  HAL_TIM_IC_ConfigChannel = 312
+ONLY-IN-B  HAL_TIM_IC_Init = 158
+ONLY-IN-B  HAL_TIM_IC_MspInit = 18
+ONLY-IN-B  HAL_TIM_IC_Start_IT = 536
+ONLY-IN-B  pwm_capture_count = 4
+ONLY-IN-B  pwm_cycle_fall = 1
+ONLY-IN-B  pwm_duty_x100 = 4
+ONLY-IN-B  pwm_en_prev = 1
+ONLY-IN-B  pwm_expect_rise = 1
+ONLY-IN-B  pwm_have_rise = 1
+ONLY-IN-B  pwm_high_ticks = 4
+ONLY-IN-B  pwm_in_duty_to_rpm = 56
+ONLY-IN-B  pwm_in_duty_x100 = 32
+ONLY-IN-B  pwm_in_enable_level = 36
+ONLY-IN-B  pwm_in_freq_hz = 56
+ONLY-IN-B  pwm_in_get_rpm_at_100 = 20
+ONLY-IN-B  pwm_in_gpio_init = 92
+ONLY-IN-B  pwm_in_init = 336
+ONLY-IN-B  pwm_in_is_uart_override = 20
+ONLY-IN-B  pwm_in_operator_stop = 40
+ONLY-IN-B  pwm_in_poll = 404
+ONLY-IN-B  pwm_in_set_polarity = 68
+ONLY-IN-B  pwm_in_set_rpm_at_100 = 72
+ONLY-IN-B  pwm_in_set_uart_override = 68
+ONLY-IN-B  pwm_in_signal_lost_ms = 24
+ONLY-IN-B  pwm_in_signal_valid = 76
+ONLY-IN-B  pwm_last_capture_ms = 4
+ONLY-IN-B  pwm_operator_stop = 1
+ONLY-IN-B  pwm_period_ticks = 4
+ONLY-IN-B  pwm_poll_tick = 4
+ONLY-IN-B  pwm_rise_time = 2
+ONLY-IN-B  pwm_rpm_at_100 = 4
+ONLY-IN-B  pwm_setpoint_rpm = 4
+ONLY-IN-B  pwm_uart_override = 1
+ONLY-IN-B  TIM_TI1_SetConfig = 180
+ONLY-IN-B  TIM_TI2_SetConfig = 120
+ONLY-IN-B  TIM_TI3_SetConfig = 118
+ONLY-IN-B  TIM_TI4_SetConfig = 120
+TOTALS: A=49631 bytes in 484 syms, B=53331 bytes in 523 syms

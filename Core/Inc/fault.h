@@ -1,9 +1,9 @@
 /**
   ******************************************************************************
   * @file    fault.h
-  * @brief   Защита: stall (заклинивание), недостоверный BEMF, потеря UART,
-  *          просадка питания (SUPPLY_LOW) и обрыв измерительного тракта
-  *          (SENSOR_FAULT).
+  * @brief   Защита: stall (заклинивание), недостоверный BEMF, потеря управления
+  *          (UART — сборка UART; пропадание ШИМ grbl при активном PB8 — сборка
+  *          GRBL), просадка питания (SUPPLY_LOW), обрыв тракта (SENSOR_FAULT).
   ******************************************************************************
   */
 
@@ -17,6 +17,7 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "ctrl_mode.h"
 
 /* Exported constants --------------------------------------------------------*/
 #define FAULT_NONE              0U      /* Аварии нет                            */
@@ -25,6 +26,7 @@ extern "C" {
 #define FAULT_UART_LOST         3U      /* Потеря связи с ПК                     */
 #define FAULT_SUPPLY_LOW        4U      /* Просадка/отсутствие питания мотора    */
 #define FAULT_SENSOR_FAULT      5U      /* Обрыв измерительного тракта (ADC)     */
+#define FAULT_PWM_LOST          6U      /* Нет ШИМ от grbl при PB8 = 1 (GRBL)    */
 
 #define FAULT_STALL_SETPOINT_RPM  500.0f /* Уставка, выше которой следим за stall */
 #define FAULT_STALL_MEASURED_RPM  100.0f /* Порог оборотов для stall              */
@@ -32,6 +34,7 @@ extern "C" {
 #define FAULT_BEMF_INVALID_LIMIT  3U     /* Недостоверных замеров подряд           */
 #define FAULT_SUPPLY_MIN_VOLTS    6.0f   /* Минимальное питание мотора, В         */
 #define FAULT_SENSOR_LIMIT        3U     /* Замеров подряд «оба входа в нуле»     */
+#define FAULT_PWM_LOST_MS         500U   /* Подтверждение потери ШИМ grbl, мс     */
 #define FAULT_UART_TIMEOUT_MS     5000U  /* Таймаут команд UART, мс               */
 #define FAULT_LED_HALF_PERIOD_MS  100U   /* Мигание LED 5 Гц (полупериод 100 мс)  */
 

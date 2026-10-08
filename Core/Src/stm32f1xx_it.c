@@ -25,6 +25,7 @@
 #include "bemf.h"
 #include "pid.h"
 #include "fault.h"
+#include "ctrl_mode.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -64,6 +65,9 @@ extern UART_HandleTypeDef huart1;
 extern TIM_HandleTypeDef h_bemf_tim;    /* TIM3: планировщик замеров BEMF      */
 extern TIM_HandleTypeDef h_pid_tim;     /* TIM2: ПИ-регулятор и защиты         */
 extern DMA_HandleTypeDef h_bemf_dma;    /* DMA1 Channel1: ADC1 -> память       */
+#if BEMF_CTRL_GRBL
+extern TIM_HandleTypeDef h_pwm_in_tim;  /* TIM4: захват ШИМ от grbl (PB6)      */
+#endif
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -246,6 +250,22 @@ void TIM3_IRQHandler(void)
   bemf_isr_tick();                      /* Измерительная пауза + ADC + расчёт  */
   /* USER CODE END TIM3_IRQn 1 */
 }
+
+#if BEMF_CTRL_GRBL
+/**
+  * @brief This function handles TIM4 global interrupt (захват входного ШИМ).
+  */
+void TIM4_IRQHandler(void)
+{
+  /* USER CODE BEGIN TIM4_IRQn 0 */
+
+  /* USER CODE END TIM4_IRQn 0 */
+  HAL_TIM_IRQHandler(&h_pwm_in_tim);
+  /* USER CODE BEGIN TIM4_IRQn 1 */
+  /* Разбор захвата выполняет HAL_TIM_IC_CaptureCallback() в pwm_in.c */
+  /* USER CODE END TIM4_IRQn 1 */
+}
+#endif
 
 /**
   * @brief This function handles DMA1 channel1 global interrupt (ADC1 -> память).

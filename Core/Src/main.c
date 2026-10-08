@@ -26,6 +26,8 @@
 #include "pid.h"
 #include "fault.h"
 #include "uart_cmd.h"
+#include "ctrl_mode.h"
+#include "pwm_in.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -100,16 +102,25 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   /* Модули привода инициализируются в порядке зависимостей:
-     ШИМ -> ПИ (TIM2) -> BEMF (ADC1: 2 канала + DMA, TIM3, DWT) -> защита ->
-     связь с ПК. */
+     ШИМ -> ПИ (TIM2) -> BEMF (ADC1: 2 канала + DMA, TIM3, DWT) ->
+     вход управления grbl (TIM4) -> защита -> связь с ПК. */
   motor_pwm_init();                     /* TIM1_CH1: CCR1 = 0, ключ закрыт     */
   pid_init();                           /* TIM2: 1 кГц — ПИ и защиты           */
   bemf_init();                          /* ADC1 IN0/IN1 + DMA + TIM3 + DWT     */
+#if BEMF_CTRL_GRBL
+  pwm_in_init();                        /* PB6/PB8 + TIM4: вход от grbl        */
+#endif
   fault_init();                         /* Защита и индикация LED PC13         */
   uart_cmd_init();                      /* USART1: приём команд по прерыванию  */
 
-  uart_cmd_send_string("\r\nBEMF_reg ready\r\n"
+#if BEMF_CTRL_GRBL
+  uart_cmd_send_string("\r\n" BEMF_FW_NAME " ready (PB6 PWM -> SET, PB8 EN)\r\n"
+                       "M0 UART  M1 GRBL  P<rpm> AT 100%  K<kp>,<ki> GAINS\r\n"
+                       "X STOP  ? STATUS\r\n");
+#else
+  uart_cmd_send_string("\r\n" BEMF_FW_NAME " ready\r\n"
                        "S<rpm> SET  K<kp>,<ki> GAINS  R RUN  X STOP  ? STATUS  C CAL\r\n");
+#endif
 
   /* USER CODE END 2 */
 
@@ -123,6 +134,10 @@ int main(void)
     /* Разбор команд ПК и вывод телеметрии раз в 100 мс. Регулирование и
        измерения выполняются в прерываниях TIM2 (1 кГц) и TIM3 (1 мс). */
     uart_cmd_poll();
+#if BEMF_CTRL_GRBL
+    /* Уставка и пуск/стоп от grbl (PB6/PB8) раз в 50 мс. */
+    pwm_in_poll();
+#endif
   }
   /* USER CODE END 3 */
 }

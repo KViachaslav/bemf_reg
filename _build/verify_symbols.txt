@@ -1,0 +1,32 @@
+﻿--- uart: pwm_in/TIM4 ---
+
+080045b4 T HAL_TIM_PWM_Init
+08001e4c T motor_pwm_init
+08006874 W TIM4_IRQHandler
+
+
+--- grbl: pwm_in/TIM4 ---
+
+2000040c B h_pwm_in_tim
+08004c84 T HAL_TIM_PWM_Init
+08001e60 T motor_pwm_init
+08002938 t pwm_in_duty_to_rpm
+08002728 T pwm_in_duty_x100
+08002798 T pwm_in_enable_level
+08002748 T pwm_in_freq_hz
+0800283c T pwm_in_get_rpm_at_100
+08002898 t pwm_in_gpio_init
+080022e4 T pwm_in_init
+080027bc T pwm_in_is_uart_override
+08002814 T pwm_in_operator_stop
+08002548 T pwm_in_poll
+080028f4 t pwm_in_set_polarity
+08002850 T pwm_in_set_rpm_at_100
+080027d0 T pwm_in_set_uart_override
+08002780 T pwm_in_signal_lost_ms
+080026dc T pwm_in_signal_valid
+08006b4c T TIM4_IRQHandler
+
+
+--- grbl telemetry strings ---
+PWM=True M0=True M1=True P=True FILT=True
