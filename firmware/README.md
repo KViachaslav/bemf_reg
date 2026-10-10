@@ -27,11 +27,19 @@ powershell -ExecutionPolicy Bypass -File _build\build_all.ps1
 |---|---|---|
 | `BEMF_reg_uart.bin` | 40880 | `0CF8580BA515614D08B07DEED24B67F9` |
 | `BEMF_reg_uart.hex` | 115070 | `72F076966FDD80B8E46B652844B46277` |
-| `BEMF_reg_grbl.bin` | 44636 | `559BC1EF837A97A6C21298E843E630CE` |
-| `BEMF_reg_grbl.hex` | 125624 | `4020123382E0F36FBAD5667A8E2BDAFC` |
+| `BEMF_reg_grbl.bin` | 44684 | `07A749881C18FE2FF9241E817464EC85` |
+| `BEMF_reg_grbl.hex` | 125759 | `14F50BA19B57B3A98CB226EE5B1F9720` |
 
 Размеры секций (`arm-none-eabi-size`): вариант `uart` — `text=40392 data=484
-bss=2476`, вариант `grbl` — `text=44144 data=488 bss=2584`; компиляция без
+bss=2476`, вариант `grbl` — `text=44192 data=488 bss=2584`; компиляция без
 предупреждений (`-Wall -Wextra`). Сборка воспроизводима: повторный прогон
 `build_all.ps1` даёт те же MD5. Контрольные суммы удобно сверять после
 пересборки (`Get-FileHash firmware\*.bin,firmware\*.hex -Algorithm MD5`).
+
+> **Плата варианта GRBL разведена с перекрёстными A0/A1** — входы измерения
+> напряжения в GRBL-сборке переставлены (`BEMF_ADC_CH_SWAP = 1`, README §18.7),
+> поэтому для неё собран отдельный бинарник. UART-сборка этой правки не касается:
+> её `.bin`/`.hex` **байт-в-байт те же**, что и до неё (MD5 в таблице выше
+> совпадают с предыдущим выпуском). Собирать вариант без перестановки —
+> `_build\build_main.ps1 -Mode grbl -AdcSwap off`; GRBL-сборка с включённой
+> перестановкой печатает при старте `ADC swap: A1 = V_low, A0 = V_supply`.

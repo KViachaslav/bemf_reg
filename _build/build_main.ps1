@@ -6,11 +6,14 @@
 #
 #  Запуск:  powershell -ExecutionPolicy Bypass -File _build\build_main.ps1
 #           powershell -ExecutionPolicy Bypass -File _build\build_main.ps1 -Mode grbl
+#           powershell -ExecutionPolicy Bypass -File _build\build_main.ps1 -Mode grbl -AdcSwap off
 #  Результат: _build\out\uart\BEMF_reg.elf  либо  _build\out\grbl\BEMF_reg.elf
 #             (+ .bin, .hex, .map; копия последней сборки — в _build\out\).
 #  Вариант задаётся -Mode uart|grbl (макрос BEMF_CTRL_GRBL, см. ctrl_mode.h):
 #  uart — управление с ПК (как раньше), grbl — шпиндель grblHAL: PB6 = ШИМ,
 #  PB8 = разрешение вращения (README §18). Собрать оба — _build\build_all.ps1.
+#  -AdcSwap on|off|auto (по умолчанию auto) управляет перестановкой входов
+#  измерения A0/A1 (макрос BEMF_ADC_CH_SWAP, README §18.7).
 #
 #  ВАЖНО (подводные камни, проверено вживую):
 #   1) каждый аргумент gcc котируем — иначе PowerShell искажает токены
@@ -21,7 +24,11 @@
 # ============================================================================
 param(
   [ValidateSet('uart', 'grbl')]
-  [string]$Mode = 'uart'                # uart — управление с ПК, grbl — вход ШИМ+EN
+  [string]$Mode = 'uart',               # uart — управление с ПК, grbl — вход ШИМ+EN
+  [ValidateSet('auto', 'on', 'off')]
+  [string]$AdcSwap = 'auto'             # перестановка входов A0/A1 (README §18.7):
+                                        # auto — как принято для варианта (grbl = on,
+                                        # uart = off), on/off — принудительно
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,6 +54,12 @@ $RSP  = "$OUT\objs.rsp"
 # Управление режимом задаёт компилятору ключ BEMF_CTRL_GRBL (см. ctrl_mode.h):
 #   0 — сборка UART (как раньше), 1 — сборка GRBL (PB6 = ШИМ, PB8 = EN).
 $DEFS = if ($Mode -eq 'grbl') { @('-DBEMF_CTRL_GRBL=1') } else { @('-DBEMF_CTRL_GRBL=0') }
+
+# Перестановка входов измерения напряжения A0/A1 (README §18.7). На плате
+# варианта GRBL разъёмы разведены перекрёстно, поэтому для grbl она включена
+# по умолчанию; -AdcSwap off/on переопределяет это решение.
+if ($AdcSwap -eq 'on')  { $DEFS += '-DBEMF_ADC_CH_SWAP=1' }
+elseif ($AdcSwap -eq 'off') { $DEFS += '-DBEMF_ADC_CH_SWAP=0' }
 
 if (-not (Test-Path $GCC)) { throw "Не найден тулчейн: $GCC" }
 

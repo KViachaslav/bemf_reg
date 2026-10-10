@@ -1,0 +1,56 @@
+﻿=== BEMF_reg: проверка перестановки входов измерения A0/A1 (README 18.7) ===
+Правка: BEMF_ADC_CH_SWAP = BEMF_CTRL_GRBL (bemf.h), сборка grbl: -AdcSwap auto|on|off
+Отчёт сгенерирован: 2026-10-10 13:13:28
+
+--- 1. Готовые прошивки firmware\ ---
+0CF8580BA515614D08B07DEED24B67F9     40880 байт  2026-10-10 13:09:28  BEMF_reg_uart.bin
+72F076966FDD80B8E46B652844B46277    115070 байт  2026-10-10 13:09:28  BEMF_reg_uart.hex
+07A749881C18FE2FF9241E817464EC85     44684 байт  2026-10-10 13:09:37  BEMF_reg_grbl.bin
+14F50BA19B57B3A98CB226EE5B1F9720    125759 байт  2026-10-10 13:09:37  BEMF_reg_grbl.hex
+
+--- 2. Секции и векторы прерываний (ELF из _build\out) ---
+-- uart --
+   text	   data	    bss	    dec	    hex	filename
+  40392	    484	   2476	  43352	   a958	c:\project\BEMF_reg\_build\out\uart\BEMF_reg.elf
+08005e74 T DMA1_Channel1_IRQHandler
+08006874 W TIM4_IRQHandler
+
+-- grbl --
+   text	   data	    bss	    dec	    hex	filename
+  44192	    488	   2584	  47264	   b8a0	c:\project\BEMF_reg\_build\out\grbl\BEMF_reg.elf
+08006b68 T DMA1_Channel1_IRQHandler
+08006b54 T TIM4_IRQHandler
+
+--- 3. Макросы BEMF_ADC_* в обеих сборках (gcc -E -dM) ---
+-- uart (-DBEMF_CTRL_GRBL=0) --
+#define BEMF_ADC_CHANNEL_LOW 0U
+#define BEMF_ADC_CH_SWAP BEMF_CTRL_GRBL
+#define BEMF_ADC_RANK_LOW 1U
+#define BEMF_ADC_CHANNEL_SUPPLY 1U
+#define BEMF_ADC_RANK_SUPPLY 2U
+
+-- grbl (-DBEMF_CTRL_GRBL=1) --
+#define BEMF_ADC_CHANNEL_LOW 1U
+#define BEMF_ADC_CH_SWAP BEMF_CTRL_GRBL
+#define BEMF_ADC_RANK_LOW 1U
+#define BEMF_ADC_CHANNEL_SUPPLY 0U
+#define BEMF_ADC_RANK_SUPPLY 2U
+
+--- 4. Дизассемблер bemf_init: bemf_uart.o против bemf_grbl.o ---
+(оба объекта собраны одним тулчейном/флагами, отличаются только BEMF_CTRL_GRBL)
+=> c:\project\BEMF_reg\_build\chk\bemf_grbl.o:     file format elf32-littlearm
+=> 13e:	movs	r3, #1
+=> 15c:	movs	r3, #0
+<= c:\project\BEMF_reg\_build\chk\bemf_uart.o:     file format elf32-littlearm
+<= 13e:	movs	r3, #0
+<= 15c:	movs	r3, #1
+
+--- 5. Вывод ---
+uart: HAL_ADC_ConfigChannel: Channel=0 (rank 1, PA0 = низкая сторона),
+                            Channel=1 (rank 2, PA1 = питание)
+grbl: HAL_ADC_ConfigChannel: Channel=1 (rank 1, PA1 = низкая сторона),
+                            Channel=0 (rank 2, PA0 = питание)
+Ранги в обеих сборках одинаковы (1 = низкая сторона, 2 = питание),
+поэтому буфер DMA не меняется: adc_dma_buf[0] = низкая сторона, [1] = питание.
+Полная сборка uart после правки байт-в-байт совпала с прежним выпуском,
+у grbl изменились только каналы ADC и строка баннера "ADC swap: ...".

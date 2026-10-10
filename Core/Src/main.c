@@ -117,6 +117,11 @@ int main(void)
   uart_cmd_send_string("\r\n" BEMF_FW_NAME " ready (PB6 PWM -> SET, PB8 EN)\r\n"
                        "M0 UART  M1 GRBL  P<rpm> AT 100%  K<kp>,<ki> GAINS\r\n"
                        "X STOP  ? STATUS\r\n");
+#if BEMF_ADC_CH_SWAP
+  /* Плата GRBL разведена с перекрёстными A0/A1 (README §18.7) — печатаем
+     это в баннере, чтобы прошитое ПО можно было опознать без программатора. */
+  uart_cmd_send_string("ADC swap: A1 = V_low, A0 = V_supply\r\n");
+#endif
 #else
   uart_cmd_send_string("\r\n" BEMF_FW_NAME " ready\r\n"
                        "S<rpm> SET  K<kp>,<ki> GAINS  R RUN  X STOP  ? STATUS  C CAL\r\n");

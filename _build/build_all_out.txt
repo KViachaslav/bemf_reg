@@ -1,4 +1,4 @@
-=== сборка варианта uart ===
+﻿=== сборка варианта uart ===
 == compile: 28 файлов ==
 == link BEMF_reg.elf ==
    text	   data	    bss	    dec	    hex	filename
@@ -16,13 +16,13 @@ OK (uart) -> c:\project\BEMF_reg\_build\out\uart\BEMF_reg.elf
 == compile: 28 файлов ==
 == link BEMF_reg.elf ==
    text	   data	    bss	    dec	    hex	filename
-  44144	    488	   2584	  47216	   b870	c:\project\BEMF_reg\_build\out\grbl\BEMF_reg.elf
+  44192	    488	   2584	  47264	   b8a0	c:\project\BEMF_reg\_build\out\grbl\BEMF_reg.elf
 == проверка векторов прерываний ==
 
-08006b60 T DMA1_Channel1_IRQHandler
-08006b18 T TIM2_IRQHandler
-08006b34 T TIM3_IRQHandler
-08006b4c T TIM4_IRQHandler
+08006b68 T DMA1_Channel1_IRQHandler
+08006b20 T TIM2_IRQHandler
+08006b3c T TIM3_IRQHandler
+08006b54 T TIM4_IRQHandler
 OK (grbl) -> c:\project\BEMF_reg\_build\out\grbl\BEMF_reg.elf
 
 
@@ -30,11 +30,11 @@ OK (grbl) -> c:\project\BEMF_reg\_build\out\grbl\BEMF_reg.elf
 
 Name              Length LastWriteTime      
 ----              ------ -------------      
-BEMF_reg_grbl.bin  44636 08.10.2026 23:09:37
-BEMF_reg_grbl.hex 125624 08.10.2026 23:09:37
-BEMF_reg_uart.bin  40880 08.10.2026 23:09:26
-BEMF_reg_uart.hex 115070 08.10.2026 23:09:27
-README.md           1698 08.10.2026 22:57:53
+BEMF_reg_grbl.bin  44684 10.10.2026 13:09:37
+BEMF_reg_grbl.hex 125759 10.10.2026 13:09:37
+BEMF_reg_uart.bin  40880 10.10.2026 13:09:28
+BEMF_reg_uart.hex 115070 10.10.2026 13:09:28
+README.md           2438 08.10.2026 23:09:48
 
 
-OK: обе прошивки собраны, файлы для коммита — в firmware\
+OK: обе прошивки собраны, файлы для коммита - в firmware\

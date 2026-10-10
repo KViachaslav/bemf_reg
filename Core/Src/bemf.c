@@ -22,9 +22,18 @@
   *                 └───► PA1 (ADC1_IN1) — плюс мотора (питание)
   *                        (делитель 10к/2к на GND)
   *
+  *  ВНИМАНИЕ (вариант сборки GRBL). На плате с разъёмами под grblHAL выводы
+  *  A0/A1 разведены наоборот, поэтому в GRBL-сборке роли входов переставлены
+  *  (BEMF_ADC_CH_SWAP = 1, README §18.7): низкую сторону измеряет PA1 (IN1),
+  *  питание — PA0 (IN0). «Жёстких» номеров каналов в коде нет: инициализация
+  *  ADC берёт номера из BEMF_ADC_CHANNEL_LOW/SUPPLY (bemf.h), а результат
+  *  читается из буфера DMA по рангам (BEMF_ADC_RANK_LOW = 1 -> adc_dma_buf[0],
+  *  BEMF_ADC_RANK_SUPPLY = 2 -> adc_dma_buf[1]). Делители 10к/2к стоят на обоих
+  *  входах, поэтому масштаб от перестановки не зависит.
+  *
   *  КЛЮЧЕВАЯ ИДЕЯ:
-  *   - PA1 измеряет напряжение питания мотора V_supply (номинал 12 В);
-  *   - PA0 измеряет напряжение на низкой стороне мотора V_low (там сидит BEMF);
+  *   - вход «питание» измеряет напряжение питания мотора V_supply (номинал 12 В);
+  *   - вход «низкая сторона» измеряет V_low (в паузе там сидит BEMF);
   *   - BEMF = V_supply - V_low (в паузе, когда IRLZ44N закрыт).
   *  Питание измеряется в каждом замере, поэтому жёсткая константа 12 В в коде
   *  НЕ используется: просадка питания под нагрузкой компенсируется сама.
@@ -32,7 +41,7 @@
   *  ЗАМЕР (период BEMF_MEASURE_PERIOD_MS):
   *   1. ШИМ останавливается, ключ IRLZ44N закрыт      — motor_pwm_pause();
   *   2. пауза BEMF_SETTLE_US — затухание индуктивного выброса;
-  *   3. ADC1 в режиме Scan (IN0 → IN1) по программному триггеру, результаты
+  *   3. ADC1 в режиме Scan (низкая сторона → питание) по программному триггеру, результаты
   *      перекладываются в память через DMA1 Channel1 (Circular);
   *   4. пересчёт кодов в V_low/V_supply, проверка достоверности;
   *   5. V_bemf = V_supply - V_low, скользящее среднее, RPM = V_bemf*K*sign;
@@ -54,7 +63,10 @@ DMA_HandleTypeDef h_bemf_dma;               /* DMA1 Channel1: ADC1 -> памят
 
 static ADC_HandleTypeDef h_bemf_adc;        /* ADC1: 2 канала, SW-триггер      */
 
-/* Буфер DMA: [0] — PA0 (низкая сторона), [1] — PA1 (питание).
+/* Буфер DMA: [0] — низкая сторона (ранг 1), [1] — питание (ранг 2).
+   Номера каналов ADC задаются BEMF_ADC_CHANNEL_LOW/SUPPLY и в GRBL-сборке
+   переставлены (BEMF_ADC_CH_SWAP, README §18.7) — порядок ячеек буфера при
+   этом НЕ меняется, он всегда соответствует рангам.
    Тип uint16_t обязателен: DMA1 Channel1 настроен на полуслова
    (DMA_MDATAALIGN_HALFWORD), поэтому АЦП кладёт оба 12-битных отсчёта в
    буфер как две 16-битные ячейки. С типом uint32_t пара отсчётов
@@ -91,7 +103,8 @@ static void     bemf_invalidate(void);
 /* Exported functions --------------------------------------------------------*/
 
 /**
-  * @brief  Инициализация ADC1 (IN0/PA0 + IN1/PA1, DMA) и TIM3 (период замеров).
+  * @brief  Инициализация ADC1 (входы «низкая сторона» и «питание», номера
+  *         каналов — BEMF_ADC_CHANNEL_LOW/SUPPLY, DMA) и TIM3 (период замеров).
   */
 void bemf_init(void)
 {
@@ -154,14 +167,15 @@ void bemf_init(void)
      зарядиться после индуктивного выброса мотора                          */
   channel_config.SamplingTime = ADC_SAMPLETIME_71CYCLES_5;
 
-  channel_config.Channel = BEMF_ADC_CHANNEL_LOW;    /* PA0: низкая сторона    */
+  channel_config.Channel = BEMF_ADC_CHANNEL_LOW;    /* низкая сторона (A0/A1
+                                                       по BEMF_ADC_CH_SWAP)   */
   channel_config.Rank = BEMF_ADC_RANK_LOW;
   if (HAL_ADC_ConfigChannel(&h_bemf_adc, &channel_config) != HAL_OK)
   {
     Error_Handler();
   }
 
-  channel_config.Channel = BEMF_ADC_CHANNEL_SUPPLY; /* PA1: питание мотора    */
+  channel_config.Channel = BEMF_ADC_CHANNEL_SUPPLY; /* питание мотора         */
   channel_config.Rank = BEMF_ADC_RANK_SUPPLY;
   if (HAL_ADC_ConfigChannel(&h_bemf_adc, &channel_config) != HAL_OK)
   {
@@ -235,7 +249,7 @@ void bemf_isr_tick(void)
   /* 2. Ожидание затухания индуктивного выброса (BEMF_SETTLE_US = 1 мс) */
   bemf_delay_us(BEMF_SETTLE_US);
 
-  /* 3. Сканирование IN0 (низкая сторона) и IN1 (питание) через DMA */
+  /* 3. Сканирование входов «низкая сторона» и «питание» через DMA */
   if (bemf_adc_scan() == 0U)
   {
     motor_pwm_resume();
@@ -346,7 +360,8 @@ void HAL_ADC_ErrorCallback(ADC_HandleTypeDef *hadc)
 }
 
 /**
-  * @brief  Последний «сырой» код АЦП низкой стороны (PA0).
+  * @brief  Последний «сырой» код АЦП низкой стороны (PA0 или PA1 — зависит
+  *         от BEMF_ADC_CH_SWAP, см. bemf.h §18.7).
   */
 uint16_t bemf_get_raw(void)
 {
@@ -460,7 +475,7 @@ static void bemf_delay_us(uint32_t us)
 }
 
 /**
-  * @brief  Сканирование двух каналов ADC1 (IN0 -> IN1) с DMA.
+  * @brief  Сканирование двух каналов ADC1 (низкая сторона -> питание) с DMA.
   * @note   Ожидание ограничено счётчиком BEMF_DMA_GUARD_ITER (при 64 МГц это
   *         ~1.5 мс против ожидаемых 16 мкс скана — 100-кратный запас):
   *         HAL_GetTick() в прерывании может не тикать, поэтому таймаут HAL не
