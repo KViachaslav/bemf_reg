@@ -982,5 +982,17 @@ powershell -ExecutionPolicy Bypass -File _build\build_main.ps1 -Mode grbl       
 `2` = питание) в обеих сборках одинаковы, поэтому буфер DMA и формулы напряжений
 не меняются.
 
-| `text` / `data` / `bss` | 40392 / 484 / 2476 | 44144 / 488 / 2584 |
+Размер секций (`arm-none-eabi-size`) с учётом правки: `uart` — `text=40392
+data=484 bss=2476`, `grbl` — `text=44192 data=488 bss=2584` (разница 48 байт —
+строка баннера и перестановка каналов).
+
+**Прошито на плату и прочитано обратно.** GRBL-сборка залита в стенд (ST-Link
+SN `37FF71064E573436CF5C1543`, STM32F103 Medium-density, 64 КБ) штатным скриптом
+`_build\flash_main.ps1 -Fw grbl`; программатор подтвердил запись (`Download
+verified successfully`, MCU Reset). Содержимое флеша затем прочитано обратно
+(`STM32_Programmer_CLI -u 0x08000000 44800`) и **побайтно совпало** с
+`firmware\BEMF_reg_grbl.bin` (MD5 `07A749881C18FE2FF9241E817464EC85`), а в
+образе найдена строка баннера `ADC swap: A1 = V_low, A0 = V_supply` (смещение
+42672) — то есть в чипе именно swap-вариант. Журнал прошивки —
+`_build\flash_out5.txt`.
 
